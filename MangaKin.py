@@ -7,38 +7,88 @@ import threading
 import time
 import webbrowser
 from io import BytesIO
+import re
 
 # Configuração do tema
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-def extrair_nome_capitulo(url):
-    partes = url.rstrip("/").split("/")[-1].replace("-capitulo-", " Cap ").title()
-    return partes
+def extrair_nome_capitulo(url, capitulo=None):
+    match = re.search(r'/capitulo/([^/]+)-capitulo-(\d+)', url)
+    if match:
+        nome_manga = match.group(1).replace("-", " ").title()
+        numero_capitulo = capitulo if capitulo else match.group(2)
+        return f"{nome_manga} Cap {numero_capitulo}"
+    return "Capitulo Desconhecido"
 
-def abrir_link(url):
-    webbrowser.open(url)
+# Nova função para baixar apenas o PDF
 
-def baixar_imagens_manga(url, pasta_destino):
-    if not os.path.exists(pasta_destino):
-        os.makedirs(pasta_destino)
-    
+def baixar_apenas_pdf(url):
     response = requests.get(url)
     if response.status_code != 200:
-        status_label.configure(text="Erro ao acessar a página.")
+        status_label.configure(text=f"Erro ao acessar {url}")
         return
-    
+
     soup = BeautifulSoup(response.text, 'html.parser')
     imagens = soup.find_all("img", attrs={"loading": "lazy", "width": "680px", "height": "860px"})
-    
+
     if not imagens:
-        status_label.configure(text="Nenhuma imagem encontrada no padrão especificado.")
+        status_label.configure(text=f"Nenhuma imagem encontrada para {url}")
         return
-    
+
     caminhos_imagens = []
     total_imagens = len(imagens)
     start_time = time.time()
-    
+
+    for idx, img in enumerate(imagens, start=1):
+        url_imagem = img.get("src")
+        if url_imagem:
+            caminhos_imagens.append(BytesIO(requests.get(url_imagem).content))
+            if idx == 1:
+                exibir_capa(url_imagem)  # Exibe a capa do mangá
+            elapsed_time = time.time() - start_time
+            estimated_time = (elapsed_time / idx) * (total_imagens - idx)
+            progress_bar.set(idx / total_imagens)
+            status_label.configure(text=f"Baixando {idx}/{total_imagens}... {estimated_time:.2f}s restantes")
+            app.update_idletasks()
+
+    if caminhos_imagens:
+        status_label.configure(text="Convertendo imagens em PDF...")
+        criar_pdf(caminhos_imagens, "./", extrair_nome_capitulo(url))
+
+    status_label.configure(text=f"PDF salvo com sucesso!")
+    progress_bar.set(1.0)
+    app.update_idletasks()
+
+
+
+
+def abrir_link(url):
+    """Abre um link no navegador."""
+    webbrowser.open(url)
+
+
+def baixar_imagens_manga(url, pasta_destino):
+    """Baixa todas as imagens de um capítulo e as salva."""
+    if not os.path.exists(pasta_destino):
+        os.makedirs(pasta_destino)
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        status_label.configure(text=f"Erro ao acessar {url}")
+        return
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+    imagens = soup.find_all("img", attrs={"loading": "lazy", "width": "680px", "height": "860px"})
+
+    if not imagens:
+        status_label.configure(text=f"Nenhuma imagem encontrada para {url}")
+        return
+
+    caminhos_imagens = []
+    total_imagens = len(imagens)
+    start_time = time.time()
+
     for idx, img in enumerate(imagens, start=1):
         url_imagem = img.get("src")
         if url_imagem:
@@ -46,20 +96,22 @@ def baixar_imagens_manga(url, pasta_destino):
             if caminho_imagem:
                 caminhos_imagens.append(caminho_imagem)
                 if idx == 1:
-                    exibir_capa(url_imagem)
+                    exibir_capa(url_imagem)  # Atualiza a capa para cada capítulo
                 elapsed_time = time.time() - start_time
                 estimated_time = (elapsed_time / idx) * (total_imagens - idx)
                 progress_bar.set(idx / total_imagens)
                 status_label.configure(text=f"Baixando {idx}/{total_imagens}... {estimated_time:.2f}s restantes")
-    
+
     if caminhos_imagens:
         status_label.configure(text="Convertendo imagens em PDF...")
         criar_pdf(caminhos_imagens, pasta_destino, pasta_destino)
-    
-    status_label.configure(text=f"Download concluído! Arquivos salvos em '{pasta_destino}'")
+
+    status_label.configure(text=f"Download concluído: {pasta_destino}")
     progress_bar.set(1.0)
 
+
 def baixar_imagem(url, pasta_destino, nome_arquivo):
+    """Baixa uma única imagem."""
     try:
         resposta = requests.get(url, stream=True)
         if resposta.status_code == 200:
@@ -72,7 +124,9 @@ def baixar_imagem(url, pasta_destino, nome_arquivo):
         print(f"Erro ao baixar a imagem {url}: {e}")
         return None
 
+
 def criar_pdf(lista_imagens, pasta_destino, nome_pdf):
+    """Cria um PDF com as imagens baixadas."""
     try:
         imagens = [Image.open(img).convert("RGB") for img in lista_imagens]
         caminho_pdf = os.path.join(pasta_destino, f"{nome_pdf}.pdf")
@@ -81,7 +135,9 @@ def criar_pdf(lista_imagens, pasta_destino, nome_pdf):
     except Exception as e:
         print(f"Erro ao criar o PDF: {e}")
 
+
 def exibir_capa(url):
+    """Exibe a capa do mangá."""
     try:
         resposta = requests.get(url)
         if resposta.status_code == 200:
@@ -92,16 +148,50 @@ def exibir_capa(url):
     except Exception as e:
         print(f"Erro ao carregar a capa: {e}")
 
+
 def iniciar_download_thread():
+    """Inicia o download em uma thread separada para não travar a interface."""
     threading.Thread(target=iniciar_download, daemon=True).start()
 
+
 def iniciar_download():
-    url = link_input.get()
-    if url:
-        nome_pasta = extrair_nome_capitulo(url)
-        status_label.configure(text="Iniciando download...")
+    """Gerencia o download dos capítulos, incluindo o modo em massa."""
+    url_base = link_input.get().strip()
+    cap_inicio = cap_inicio_input.get().strip()
+    cap_fim = cap_fim_input.get().strip()
+    apenas_pdf = pdf_checkbox.get()
+
+    if not url_base:
+        status_label.configure(text="Insira um link válido.")
+        return
+
+    match = re.search(r'capitulo-(\d+)', url_base)
+    if not match:
+        status_label.configure(text="URL inválida. Certifique-se de que contém 'capitulo-<número>'")
+        return
+
+    try:
+        cap_inicio = int(cap_inicio) if cap_inicio else int(match.group(1))
+        cap_fim = int(cap_fim) if cap_fim else cap_inicio
+    except ValueError:
+        status_label.configure(text="Capítulos devem ser números inteiros.")
+        return
+
+    for cap in range(cap_inicio, cap_fim + 1):
+        url_capitulo = re.sub(r'capitulo-\d+', f'capitulo-{cap}', url_base)
+        nome_pasta = extrair_nome_capitulo(url_base, cap)
+        status_label.configure(text=f"Baixando capítulo {cap}...")
         progress_bar.set(0)
-        baixar_imagens_manga(url, nome_pasta)
+        app.update_idletasks()
+
+        if apenas_pdf:
+            baixar_apenas_pdf(url_capitulo)
+        else:
+            baixar_imagens_manga(url_capitulo, nome_pasta)
+
+    status_label.configure(text="Todos os downloads concluídos!")
+    app.update_idletasks()
+
 
 # Criar interface gráfica
 app = ctk.CTk()
@@ -128,30 +218,32 @@ input_frame = ctk.CTkFrame(content_frame)
 input_frame.pack(side="left", fill="both", expand=True)
 
 ctk.CTkLabel(input_frame, text="Insira o link do mangá:", font=("Arial", 14)).pack(pady=5)
-
 link_input = ctk.CTkEntry(input_frame, width=350, height=35, font=("Arial", 12))
 link_input.pack(pady=5)
+
+ctk.CTkLabel(input_frame, text="Capítulo inicial:", font=("Arial", 12)).pack()
+cap_inicio_input = ctk.CTkEntry(input_frame, width=100, height=30, font=("Arial", 12))
+cap_inicio_input.pack(pady=2)
+
+ctk.CTkLabel(input_frame, text="Capítulo final:", font=("Arial", 12)).pack()
+cap_fim_input = ctk.CTkEntry(input_frame, width=100, height=30, font=("Arial", 12))
+cap_fim_input.pack(pady=2)
+
+
+
+progress_bar = ctk.CTkProgressBar(frame, width=350)
+progress_bar.pack(pady=5)
+progress_bar.set(0)
+
+# Adicionando checkbox e botão para baixar apenas o PDF
+pdf_checkbox = ctk.CTkCheckBox(input_frame, text="Baixar apenas o PDF")
+pdf_checkbox.pack(pady=5)
 
 start_button = ctk.CTkButton(input_frame, text="Baixar", command=iniciar_download_thread, font=("Arial", 14, "bold"), corner_radius=10)
 start_button.pack(pady=10)
 
-progress_bar = ctk.CTkProgressBar(frame, width=300)
-progress_bar.pack(pady=5)
-progress_bar.set(0)
 
 status_label = ctk.CTkLabel(frame, text="", font=("Arial", 12))
 status_label.pack(pady=10)
-
-buttons_frame = ctk.CTkFrame(frame)
-buttons_frame.pack(pady=10)
-
-linkedin_button = ctk.CTkButton(buttons_frame, text="Meu LinkedIn", command=lambda: abrir_link("www.linkedin.com/in/luiz-brandão-39633a244"), font=("Arial", 12), corner_radius=10)
-linkedin_button.pack(side="left", padx=5)
-
-program_button = ctk.CTkButton(buttons_frame, text="Baixar Programa", command=lambda: abrir_link("https://calibre-ebook.com"), font=("Arial", 12), corner_radius=10)
-program_button.pack(side="left", padx=5)
-
-video_button = ctk.CTkButton(buttons_frame, text="Ver Tutorial", command=lambda: abrir_link("https://youtube.com"), font=("Arial", 12), corner_radius=10)
-video_button.pack(side="left", padx=5)
 
 app.mainloop()
