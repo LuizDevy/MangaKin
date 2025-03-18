@@ -153,13 +153,64 @@ def iniciar_download_thread():
     """Inicia o download em uma thread separada para não travar a interface."""
     threading.Thread(target=iniciar_download, daemon=True).start()
 
+def baixar_varios_pdfs(url_base, cap_inicio, cap_fim):
+    """Baixa vários capítulos e os une em um único PDF com status atualizado."""
+    todas_imagens = []
+    total_capitulos = cap_fim - cap_inicio + 1
+    start_time = time.time()
+    capa_exibida = False  # Para exibir apenas a primeira capa
+
+    for i, cap in enumerate(range(cap_inicio, cap_fim + 1), start=1):
+        url_capitulo = re.sub(r'capitulo-\d+', f'capitulo-{cap}', url_base)
+        response = requests.get(url_capitulo)
+        
+        if response.status_code != 200:
+            status_label.configure(text=f"Erro ao acessar {url_capitulo}")
+            continue
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        imagens = soup.find_all("img", attrs={"loading": "lazy", "width": "680px", "height": "860px"})
+
+        if not imagens:
+            status_label.configure(text=f"Nenhuma imagem encontrada para {url_capitulo}")
+            continue
+
+        for idx, img in enumerate(imagens, start=1):
+            url_imagem = img.get("src")
+            if url_imagem:
+                img_bytes = BytesIO(requests.get(url_imagem).content)
+                todas_imagens.append(img_bytes)
+
+                # Exibir capa apenas do primeiro capítulo
+                if not capa_exibida:
+                    exibir_capa(url_imagem)
+                    capa_exibida = True
+
+        # Atualizar status a cada capítulo baixado
+        elapsed_time = time.time() - start_time
+        estimated_time = (elapsed_time / i) * (total_capitulos - i)
+        status_label.configure(text=f"Baixando Volume: Capítulo {cap} ({i}/{total_capitulos})... {estimated_time:.2f}s restantes")
+        progress_bar.set(i / total_capitulos)
+        app.update_idletasks()
+
+    if todas_imagens:
+        status_label.configure(text="Criando PDF do volume...")
+        nome_pdf = extrair_nome_capitulo(url_base, f"Volume_{cap_inicio}-{cap_fim}")
+        criar_pdf(todas_imagens, "./", nome_pdf)
+
+    status_label.configure(text="Volume criado com sucesso!")
+    progress_bar.set(1.0)
+    app.update_idletasks()
+
+
 
 def iniciar_download():
-    """Gerencia o download dos capítulos, incluindo o modo em massa."""
+    """Gerencia o download dos capítulos, incluindo o modo de volume (PDF único)."""
     url_base = link_input.get().strip()
     cap_inicio = cap_inicio_input.get().strip()
     cap_fim = cap_fim_input.get().strip()
     apenas_pdf = pdf_checkbox.get()
+    baixar_volume = volume_checkbox.get()  # Verifica se o usuário quer um volume único
 
     if not url_base:
         status_label.configure(text="Insira um link válido.")
@@ -177,20 +228,24 @@ def iniciar_download():
         status_label.configure(text="Capítulos devem ser números inteiros.")
         return
 
-    for cap in range(cap_inicio, cap_fim + 1):
-        url_capitulo = re.sub(r'capitulo-\d+', f'capitulo-{cap}', url_base)
-        nome_pasta = extrair_nome_capitulo(url_base, cap)
-        status_label.configure(text=f"Baixando capítulo {cap}...")
-        progress_bar.set(0)
-        app.update_idletasks()
+    status_label.configure(text=f"Iniciando download dos capítulos {cap_inicio} a {cap_fim}...")
+    app.update_idletasks()
 
-        if apenas_pdf:
-            baixar_apenas_pdf(url_capitulo)
-        else:
+    if apenas_pdf or baixar_volume:
+        baixar_varios_pdfs(url_base, cap_inicio, cap_fim)  # Junta todos os capítulos em um único PDF
+    else:
+        for cap in range(cap_inicio, cap_fim + 1):
+            url_capitulo = re.sub(r'capitulo-\d+', f'capitulo-{cap}', url_base)
+            nome_pasta = extrair_nome_capitulo(url_base, cap)
+            status_label.configure(text=f"Baixando capítulo {cap}...")
+            progress_bar.set(0)
+            app.update_idletasks()
+
             baixar_imagens_manga(url_capitulo, nome_pasta)
 
     status_label.configure(text="Todos os downloads concluídos!")
     app.update_idletasks()
+
 
 
 # Criar interface gráfica
@@ -238,6 +293,11 @@ progress_bar.set(0)
 # Adicionando checkbox e botão para baixar apenas o PDF
 pdf_checkbox = ctk.CTkCheckBox(input_frame, text="Baixar apenas o PDF")
 pdf_checkbox.pack(pady=5)
+
+# Checkbox para baixar como um volume único (PDF único)
+volume_checkbox = ctk.CTkCheckBox(input_frame, text="Baixar como Volume")
+volume_checkbox.pack(pady=5)
+
 
 start_button = ctk.CTkButton(input_frame, text="Baixar", command=iniciar_download_thread, font=("Arial", 14, "bold"), corner_radius=10)
 start_button.pack(pady=10)
