@@ -128,7 +128,13 @@ def baixar_imagem(url, pasta_destino, nome_arquivo):
 def criar_pdf(lista_imagens, pasta_destino, nome_pdf):
     """Cria um PDF com as imagens baixadas."""
     try:
-        imagens = [Image.open(img).convert("RGB") for img in lista_imagens]
+        imagens = []
+        for img in lista_imagens:
+            try:
+                imagem = Image.open(img).convert("RGB")
+                imagens.append(imagem)
+            except Exception as e:
+                print(f"Erro ao abrir a imagem: {e}")
         caminho_pdf = os.path.join(pasta_destino, f"{nome_pdf}.pdf")
         imagens[0].save(caminho_pdf, save_all=True, append_images=imagens[1:])
         status_label.configure(text=f"PDF criado com sucesso: {caminho_pdf}")
